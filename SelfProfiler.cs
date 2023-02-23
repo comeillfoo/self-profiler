@@ -72,13 +72,6 @@ namespace apm {
             DumpGetters(self, self.GetType());
             Console.WriteLine("---   Environment Info    ---");
             DumpGetters(null, typeof(System.Environment));
-
-            // Console.WriteLine($"MachineName:\t{System.Environment.MachineName}");
-            // Console.WriteLine($"CommandLine:\t{System.Environment.CommandLine}");
-            // int drive_nr = 0;
-            // foreach (var drive in System.Environment.GetLogicalDrives()) {
-            //     Console.WriteLine($"Drive#{drive_nr++}:\t{drive}");
-            // }
             return 0;
         }
     }
