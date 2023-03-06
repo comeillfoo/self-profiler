@@ -4,6 +4,41 @@ using System.Collections;
 using Mono.Options;
 
 namespace SelfProfiler {
+
+    public class UsageSampler {
+        private TimeSpan startSpan = TimeSpan.Zero;
+        private DateTime startTime = DateTime.UtcNow;
+        private TimeSpan finishSpan;
+        private DateTime finishTime;
+
+        public long MemoryUsage { get; private set; }
+
+        public UsageSampler(Process current) {
+            finishSpan = current.TotalProcessorTime;
+            finishTime = DateTime.UtcNow;
+            MemoryUsage = _GetRamUsage(current);
+        }
+
+        public void Stamp(Process current) {
+            startSpan = finishSpan;
+            startTime = finishTime;
+            finishSpan = current.TotalProcessorTime;
+            finishTime = DateTime.UtcNow;
+            MemoryUsage = _GetRamUsage(current);
+        }
+
+        public double GetCPUUsage() {
+            var cpuUsedMs = (finishSpan - startSpan).TotalMilliseconds;
+            var totalMsPassed = (finishTime - startTime).TotalMilliseconds;
+            var cpuUsageTotal = cpuUsedMs / (Environment.ProcessorCount * totalMsPassed);
+            return cpuUsageTotal * 100;
+        }
+
+        private long _GetRamUsage(Process current) {
+            return Environment.Is64BitOperatingSystem? current.PrivateMemorySize64 : current.PrivateMemorySize;
+        }
+    }
+
     public class ObjectDumper {
         private int indents = 0;
         private TextWriter dumpDestination;
@@ -81,6 +116,29 @@ namespace SelfProfiler {
     }
 
     class Init {
+
+        private static bool shouldLoaderStop = false;
+
+        public static void BurdenUp() {
+            while (!shouldLoaderStop) {
+                var targetText = new byte[4000];
+                using (var stream = File.Open("/dev/urandom", FileMode.Open))
+                {
+                    using (var reader = new BinaryReader(stream, System.Text.Encoding.ASCII, false))
+                    {
+                        for (int i = 0; i < targetText.Length; ++i)
+                        {
+                            targetText[i] = reader.ReadByte();
+                        }
+                    }
+                }
+                var encryptedText = System.Convert.ToBase64String(targetText);
+                Console.WriteLine($"Encrypted: {encryptedText}");
+                var decryptedText = System.Text.Encoding.ASCII.GetString(System.Convert.FromBase64String(encryptedText));
+                Console.WriteLine($"Decrypted: {decryptedText}");
+            }
+        }
+
         private static void ShowHelp(string[] args) {
             Console.WriteLine($"Usage: SelfProfiler -c|--count [times] -d|--delay [seconds] file");
             Console.WriteLine(
@@ -108,12 +166,19 @@ namespace SelfProfiler {
                 dumpDestination.WriteLine("---   Common Info    ---");
                 processDumper.DumpGetters(null, typeof(System.Environment));
 
-                var self = Process.GetCurrentProcess();
+                Thread loader = new Thread(new ThreadStart(Init.BurdenUp));
+                loader.Start();
                 for (int i = 0; i < count; ++i) {
+                    var self = Process.GetCurrentProcess();
+                    var sampler = new UsageSampler(self);
                     dumpDestination.WriteLine("---     Process Info      ---");
                     processDumper.DumpGetters(self, self.GetType());
                     Thread.Sleep(delay * 1000);
+                    sampler.Stamp(Process.GetCurrentProcess());
+                    dumpDestination.WriteLine($"CPU: {sampler.GetCPUUsage()}%; MEM: {sampler.MemoryUsage}MB");
                 }
+                shouldLoaderStop = true;
+                loader.Join();
             }
             return 0;
         }
