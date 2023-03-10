@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Collections;
 using Mono.Options;
+using NLog;
 
 namespace SelfProfiler {
 
@@ -40,78 +41,71 @@ namespace SelfProfiler {
     }
 
     public class ObjectDumper {
-        private int indents = 0;
-        private TextWriter dumpDestination;
+        private NLog.Logger Logger;
 
-        public ObjectDumper(TextWriter output) {
-            dumpDestination = output;
+        public ObjectDumper(NLog.Logger Logger) {
+            this.Logger = Logger;
         }
 
-        public ObjectDumper() {
-            dumpDestination = Console.Out;
-        }
-
-        private void DumpValue(object? value, Type type) {
+        private void DumpValue(object? value, Type type, Stack<String> props) {
+            var keyName = String.Join(".", props.Reverse());
             if (value is Hashtable) {
-                dumpDestination.WriteLine();
-                foreach (DictionaryEntry v in (Hashtable) value) {
-                    dumpDestination.Write(v.Key);
-                    dumpDestination.WriteLine($":\t{v.Value}");
-                }
+                foreach (DictionaryEntry v in (Hashtable) value)
+                    Logger.Debug("{}[{}]:\t{}", keyName, v.Key, v.Value);
                 return;
             }
 
             if (value is IEnumerable && value is not IEnumerable<Char> && value is not IEnumerable<Process>) {
-                dumpDestination.WriteLine();
+                var index = 0;
+                var propName = props.Peek();
                 foreach (var e in (value as IEnumerable)) {
                     if (e is string || e is String)
-                        dumpDestination.WriteLine(e);
+                        Logger.Debug("{}[{}]:\t{}", keyName, index, e);
                     else {
-                        indents++;
-                        DumpGetters(e, e.GetType());
-                        indents--;
+                        props.Pop();
+                        props.Push(String.Format("{0}[{1}]", propName, index));
+                        DumpGetters(e, e.GetType(), props);
                     }
+                    index++;
                 }
                 return;
             }
 
             if (type.Name.StartsWith("FileVersionInfo")) {
-                dumpDestination.WriteLine();
-                indents++;
-                DumpGetters(value, type);
-                indents--;
+                DumpGetters(value, type, props);
                 return;
             }
-            dumpDestination.WriteLine(value);
+            Logger.Debug("{}:\t{}", keyName, value);
         }
 
-        public void DumpGetters(object? obj, Type type) {
+        public void DumpGetters(object? obj, Type type, Stack<String> props) {
             foreach (PropertyInfo propInfo in type.GetProperties()) {
+                props.Push(propInfo.Name);
                 try {
-                    for (int i = 0; i < indents; ++i)
-                        dumpDestination.Write("\t");
-                    dumpDestination.Write($"{propInfo.Name}:\t");
                     var propValue = propInfo.GetValue(obj);
-                    DumpValue(propValue, propInfo.PropertyType);
+                    DumpValue(propValue, propInfo.PropertyType, props);
                 } catch (Exception e) {
-                    dumpDestination.WriteLine($"{e.GetBaseException().Message}");
+                    var keyName = String.Join(".", props.Reverse());
+                    Logger.Debug("{}:\t{}", keyName, e.GetBaseException().Message);
+                } finally {
+                    props.Pop();
                 }
             }
 
             foreach (MethodInfo methodInfo in type.GetMethods()) {
                 if (methodInfo.Name.StartsWith("Get") && methodInfo.GetParameters().Length == 0) {
+                    props.Push(methodInfo.Name);
                     try {
-                        for (int i = 0; i < indents; ++i)
-                            dumpDestination.Write("\t");
-                        dumpDestination.Write($"{methodInfo.Name}:\t");
                         var result = methodInfo.Invoke(obj, null);
-                        DumpValue(result, methodInfo.ReturnType);
+                        DumpValue(result, methodInfo.ReturnType, props);
                     } catch (Exception e) {
-                        dumpDestination.WriteLine($"{e.GetBaseException().Message}");
+                        var keyName = String.Join(".", props.Reverse());
+                        Logger.Debug("{}:\t{}", keyName, e.GetBaseException().Message);
+                    } finally {
+                        props.Pop();
                     }
                 }
             }
-            dumpDestination.WriteLine();
         }
     }
 
@@ -161,25 +155,33 @@ namespace SelfProfiler {
                 ShowHelp(args);
 
             string outputFile = rest[0];
-            using (TextWriter dumpDestination = outputFile.Equals("-")? Console.Out : new StreamWriter(outputFile)) {
-                ObjectDumper processDumper = new ObjectDumper(dumpDestination);
-                dumpDestination.WriteLine("---   Common Info    ---");
-                processDumper.DumpGetters(null, typeof(System.Environment));
 
-                Thread loader = new Thread(new ThreadStart(Init.BurdenUp));
-                loader.Start();
-                for (int i = 0; i < count; ++i) {
-                    var self = Process.GetCurrentProcess();
-                    var sampler = new UsageSampler(self);
-                    dumpDestination.WriteLine("---     Process Info      ---");
-                    processDumper.DumpGetters(self, self.GetType());
-                    Thread.Sleep(delay * 1000);
-                    sampler.Stamp(Process.GetCurrentProcess());
-                    dumpDestination.WriteLine($"CPU: {sampler.GetCPUUsage()}%; MEM: {sampler.MemoryUsage}MB");
-                }
-                shouldLoaderStop = true;
-                loader.Join();
+            NLog.LogManager.Setup().LoadConfiguration(builder => {
+                if (outputFile.Equals("-"))
+                    builder.ForLogger().WriteToConsole();
+                else
+                    builder.ForLogger().WriteToFile(fileName: outputFile);
+            });
+
+            var Logger = NLog.LogManager.GetCurrentClassLogger();
+            ObjectDumper processDumper = new ObjectDumper(Logger);
+            Logger.Info("Dumping base info...");
+            processDumper.DumpGetters(null, typeof(System.Environment), new Stack<String>());
+
+            Thread loader = new Thread(new ThreadStart(Init.BurdenUp));
+            loader.Start();
+            for (int i = 0; i < count; ++i) {
+                var self = Process.GetCurrentProcess();
+                var sampler = new UsageSampler(self);
+                Logger.Info("Dumping process info...");
+                processDumper.DumpGetters(self, self.GetType(), new Stack<String>());
+                Thread.Sleep(delay * 1000);
+                sampler.Stamp(Process.GetCurrentProcess());
+                Logger.Debug("CPU:\t{}%", sampler.GetCPUUsage());
+                Logger.Debug("MEM:\t{}MB", sampler.MemoryUsage);
             }
+            shouldLoaderStop = true;
+            loader.Join();
             return 0;
         }
     }
