@@ -51,7 +51,7 @@ namespace SelfProfiler {
             var keyName = String.Join(".", props.Reverse());
             if (value is Hashtable) {
                 foreach (DictionaryEntry v in (Hashtable) value)
-                    Logger.Debug("{}[{}]:\t{}", keyName, v.Key, v.Value);
+                    Logger.Info("{Parameter:l}[{Key:l}]:\t{}", keyName, v.Key, v.Value);
                 return;
             }
 
@@ -60,7 +60,7 @@ namespace SelfProfiler {
                 var propName = props.Peek();
                 foreach (var e in (value as IEnumerable)) {
                     if (e is string || e is String)
-                        Logger.Debug("{}[{}]:\t{}", keyName, index, e);
+                        Logger.Info("{Parameter:l}[{}]:\t{}", keyName, index, e);
                     else {
                         props.Pop();
                         props.Push(String.Format("{0}[{1}]", propName, index));
@@ -75,7 +75,7 @@ namespace SelfProfiler {
                 DumpGetters(value, type, props);
                 return;
             }
-            Logger.Debug("{}:\t{}", keyName, value);
+            Logger.Info("{Parameter:l}:\t{}", keyName, value);
         }
 
         public void DumpGetters(object? obj, Type type, Stack<String> props) {
@@ -86,7 +86,7 @@ namespace SelfProfiler {
                     DumpValue(propValue, propInfo.PropertyType, props);
                 } catch (Exception e) {
                     var keyName = String.Join(".", props.Reverse());
-                    Logger.Debug("{}:\t{}", keyName, e.GetBaseException().Message);
+                    Logger.Info("{Parameter:l}:\t{}", keyName, e.GetBaseException().Message);
                 } finally {
                     props.Pop();
                 }
@@ -100,7 +100,7 @@ namespace SelfProfiler {
                         DumpValue(result, methodInfo.ReturnType, props);
                     } catch (Exception e) {
                         var keyName = String.Join(".", props.Reverse());
-                        Logger.Debug("{}:\t{}", keyName, e.GetBaseException().Message);
+                        Logger.Info("{Parameter:l}:\t{}", keyName, e.GetBaseException().Message);
                     } finally {
                         props.Pop();
                     }
@@ -177,8 +177,8 @@ namespace SelfProfiler {
                 processDumper.DumpGetters(self, self.GetType(), new Stack<String>());
                 Thread.Sleep(delay * 1000);
                 sampler.Stamp(Process.GetCurrentProcess());
-                Logger.Debug("CPU:\t{}%", sampler.GetCPUUsage());
-                Logger.Debug("MEM:\t{}MB", sampler.MemoryUsage);
+                Logger.Debug("CPU:\t{} %", sampler.GetCPUUsage());
+                Logger.Debug("MEM:\t{} MB", sampler.MemoryUsage);
             }
             shouldLoaderStop = true;
             loader.Join();
